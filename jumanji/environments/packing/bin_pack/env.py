@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import itertools
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple, cast
 
 import chex
 import jax
@@ -29,13 +29,16 @@ from jumanji.environments.packing.bin_pack.space import Space
 from jumanji.environments.packing.bin_pack.types import (
     EMS,
     Item,
+    ItemType,
     Location,
     Observation,
     State,
+    ValuedItem,
     item_fits_in_item,
     item_from_space,
     item_volume,
     space_from_item_and_location,
+    valued_item_from_space_and_max_value,
 )
 from jumanji.environments.packing.bin_pack.viewer import BinPackViewer
 from jumanji.tree_utils import tree_add_element, tree_slice
@@ -455,12 +458,31 @@ class BinPack(Environment[State]):
         return extras
 
     def _normalize_ems_and_items(
-        self, state: State, obs_ems: EMS, items: Item
+        self, state: State, obs_ems: EMS, items: ItemType
     ) -> Tuple[EMS, Item]:
         """Normalize the EMSs and items in the observation. Each dimension is divided by the
         container length so that they are all between 0.0 and 1.0. Hence, the ratio is not kept.
         """
-        x_len, y_len, z_len = container_item = item_from_space(state.container)
+        # If items have the extra feature: value (for cases where we want to maximize the value
+        # packed into a container instead of the volume) we normalise by the largest valued item
+        # (observed better performances than normalising with respect to the total value of all
+        # items).
+        container_item: ItemType
+        if isinstance(items, ValuedItem):
+            items = cast(ValuedItem, items)
+            state.items = cast(ValuedItem, state.items)
+            (
+                x_len,
+                y_len,
+                z_len,
+                _,
+            ) = container_item = valued_item_from_space_and_max_value(
+                state.container, jnp.max(state.items.value)
+            )
+        else:
+            items = cast(Item, items)
+            x_len, y_len, z_len = container_item = item_from_space(state.container)
+
         norm_space = Space(x1=x_len, x2=x_len, y1=y_len, y2=y_len, z1=z_len, z2=z_len)
         obs_ems = jax.tree_util.tree_map(
             lambda ems, container: ems / container, obs_ems, norm_space
@@ -502,7 +524,7 @@ class BinPack(Environment[State]):
         self,
         obs_ems: EMS,
         obs_ems_mask: chex.Array,
-        items: Item,
+        items: ItemType,
         items_mask: chex.Array,
         items_placed: chex.Array,
     ) -> chex.Array:
@@ -522,7 +544,7 @@ class BinPack(Environment[State]):
         def is_action_allowed(
             ems: EMS,
             ems_mask: chex.Array,
-            item: Item,
+            item: ItemType,
             item_mask: chex.Array,
             item_placed: chex.Array,
         ) -> chex.Array:

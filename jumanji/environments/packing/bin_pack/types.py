@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, NamedTuple, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional, Union
 
+import chex
+import jax.numpy as jnp
 from typing_extensions import TypeAlias
+
+from jumanji.environments.packing.bin_pack.space import Space
 
 if TYPE_CHECKING:
     from dataclasses import dataclass
 else:
     from chex import dataclass
 
-import chex
-import jax.numpy as jnp
-
-from jumanji.environments.packing.bin_pack.space import Space
 
 Container: TypeAlias = Space
 EMS: TypeAlias = Space
@@ -50,7 +50,28 @@ def item_from_space(space: Space) -> Item:
     )
 
 
-def item_fits_in_item(item: Item, other_item: Item) -> chex.Array:
+class ValuedItem(NamedTuple):
+    x_len: chex.Numeric
+    y_len: chex.Numeric
+    z_len: chex.Numeric
+    value: chex.Numeric
+
+
+def valued_item_from_space_and_max_value(
+    space: Space, value: chex.Numeric
+) -> ValuedItem:
+    return ValuedItem(
+        x_len=space.x2 - space.x1,
+        y_len=space.y2 - space.y1,
+        z_len=space.z2 - space.z1,
+        value=value,
+    )
+
+
+ItemType: TypeAlias = Union[Item, ValuedItem]
+
+
+def item_fits_in_item(item: ItemType, other_item: ItemType) -> chex.Array:
     """Check if an item is smaller than another one."""
     return (
         (item.x_len <= other_item.x_len)
@@ -59,7 +80,7 @@ def item_fits_in_item(item: Item, other_item: Item) -> chex.Array:
     )
 
 
-def item_volume(item: Item) -> chex.Array:
+def item_volume(item: ItemType) -> chex.Array:
     """Returns the volume as a float to prevent from overflow with 32 bits."""
     x_len = jnp.asarray(item.x_len, float)
     y_len = jnp.asarray(item.y_len, float)
@@ -90,7 +111,7 @@ def location_from_space(space: Space) -> Location:
     )
 
 
-def space_from_item_and_location(item: Item, location: Location) -> Space:
+def space_from_item_and_location(item: ItemType, location: Location) -> Space:
     """Returns a space from an item at a particular location. The bottom left corner is given
     by the location while the top right is the location plus the item dimensions.
     """
@@ -123,7 +144,7 @@ class State:
     container: Container  # leaves of shape ()
     ems: EMS  # leaves of shape (max_num_ems,)
     ems_mask: chex.Array  # (max_num_ems,)
-    items: Item  # leaves of shape (max_num_items,)
+    items: ItemType  # leaves of shape (max_num_items,)
     items_mask: chex.Array  # (max_num_items,)
     items_placed: chex.Array  # (max_num_items,)
     items_location: Location  # leaves of shape (max_num_items,)
@@ -145,7 +166,7 @@ class Observation(NamedTuple):
 
     ems: EMS  # leaves of shape (obs_num_ems,)
     ems_mask: chex.Array  # (obs_num_ems,)
-    items: Item  # leaves of shape (max_num_items,)
+    items: ItemType  # leaves of shape (max_num_items,)
     items_mask: chex.Array  # (max_num_items,)
     items_placed: chex.Array  # (max_num_items,)
     action_mask: chex.Array  # (obs_num_ems, max_num_items)

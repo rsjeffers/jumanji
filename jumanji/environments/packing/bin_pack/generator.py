@@ -16,8 +16,9 @@ import abc
 import collections
 import csv
 import functools
+import math
 import operator
-from typing import List, Tuple
+from typing import List, Optional, Tuple, cast
 
 import chex
 import jax
@@ -29,9 +30,11 @@ from jumanji.environments.packing.bin_pack.types import (
     Item,
     Location,
     State,
+    ValuedItem,
     empty_ems,
     item_from_space,
     location_from_space,
+    valued_item_from_space_and_max_value,
 )
 from jumanji.tree_utils import tree_slice, tree_transpose
 
@@ -41,6 +44,7 @@ from jumanji.tree_utils import tree_slice, tree_transpose
 TWENTY_FOOT_DIMS = (5870, 2330, 2200)
 
 CSV_COLUMNS = ["Item_Name", "Length", "Width", "Height", "Quantity"]
+OPTIONAL_COLUMNS = ["Value"]
 
 
 def make_container(container_dims: Tuple[int, int, int]) -> Container:
@@ -681,18 +685,27 @@ class RandomGenerator(Generator):
         return solution
 
     def _split_container_into_items_spaces(
-        self, container: Container, key: chex.PRNGKey
+        self,
+        container: Container,
+        key: chex.PRNGKey,
+        input_max_items_generated: Optional[int] = None,
     ) -> Tuple[Space, chex.Array]:
         """Split one space (the container) into several sub-spaces that will be identified as
         items.
+
+        The output items_spaces and items_mask array will be self.max_num_items by default but can
+        be set to a custom value that is different from this (useful for
+        RandomValueProblemGenerator).
         """
+        max_items_generated = cast(int, input_max_items_generated) or self.max_num_items
+
         chex.assert_rank(list(container.__dict__.values()), 0)
 
         def cond_fun(val: Tuple[Space, chex.Array, chex.PRNGKey]) -> jnp.bool_:
             _, items_mask, _ = val
             num_placed_items = jnp.sum(items_mask)
             return (
-                num_placed_items < self.max_num_items - self._split_num_same_items + 1
+                num_placed_items < max_items_generated - self._split_num_same_items + 1
             )
 
         def body_fun(
@@ -708,10 +721,10 @@ class RandomGenerator(Generator):
 
         items_spaces = Space(
             **jax.tree_util.tree_map(
-                lambda x: x * jnp.ones(self.max_num_items, jnp.int32), container
+                lambda x: x * jnp.ones(max_items_generated, jnp.int32), container
             ).__dict__
         )
-        items_mask = jnp.zeros(self.max_num_items, bool).at[0].set(True)
+        items_mask = jnp.zeros(max_items_generated, bool).at[0].set(True)
         init_val = (items_spaces, items_mask, key)
         (items_spaces, items_mask, _) = jax.lax.while_loop(cond_fun, body_fun, init_val)
 
@@ -875,3 +888,145 @@ class RandomGenerator(Generator):
         )
 
         return items_spaces, items_mask
+
+
+class RandomValueProblemGenerator(RandomGenerator):
+    """Instance generator that generates random instances by splitting a container into different
+    items in a random fashion. The generation works as follows. Firstly random items are generated
+    as for the RandomGenerator but the number of items generated is no more than half of
+    max_num_items. These items are then duplicated (having enough items to fit 2 containers
+    perfectly). ValuedItems are created by sampling values from a normal distribution of mean and
+    standard deviation defined at initiation. The first set of items are set to have double the
+    value of their counterparts in the duplicated items. This is to avoid the agent depending only
+    on volume features for packing a container well (to do so it also needs to distinguish between 2
+    items that have the same shape but different values).
+
+    Example:
+        ```python
+        generator = RandomGenerator(max_num_items=20, max_num_ems=80)
+        env = BinPack(generator)
+        key = jax.random.key(0)
+        reset_state = generator(key)
+        env.render(reset_state)
+        solution = generator.generate_solution(key)
+        env.render(solution)
+        ```
+    """
+
+    def __init__(
+        self,
+        max_num_items: int,
+        max_num_ems: int,
+        split_eps: float = 0.3,
+        prob_split_one_item: float = 0.7,
+        split_num_same_items: int = 5,
+        container_dims: Tuple[int, int, int] = TWENTY_FOOT_DIMS,
+        mean_value: float = 1,
+        standard_deviation_value: float = 0.5,
+    ):
+        """Instantiate a `RandomValueProblemGenerator`.
+
+        Args:
+            max_num_items: maximum number of items the generator will ever generate when creating
+                a new instance. This defines the shapes of arrays related to items in the
+                environment state. The more items the more difficult the environment will be.
+            max_num_ems: maximum number of ems the environment will handle. This defines the shape
+                of the EMS buffer that is kept in the environment state. The good number heavily
+                depends on the number of items (given by `max_num_items`).
+            split_eps: fraction of edges of a space that cannot be chosen as a split point. This
+                prevents from infinitely small items and biases the distribution towards
+                reasonable-size items. Defaults to 0.3.
+            prob_split_one_item: probability of splitting a space into 2 non-equal spaces.
+                Otherwise, the split is done into multiple copies of the same divided space.
+                Defaults to 0.7.
+            split_num_same_items: if a space is split into multiple spaces (probability
+                `1 - split_one_item_proba`), the number of spaces to split it into is chosen
+                uniformly between 1 and `split_num_same_items`. Defaults to 5.
+            container_dims: (length, width, height) tuple of integers corresponding to the
+                dimensions of the container in millimeters. By default, assume a 20-ft container.
+            mean_value: The mean value of the normal distribution from which the item values will be
+                sampled.
+            standard_deviation_value: The standard divation of the normal distribution from whic
+                the item values will be sampled.
+        """
+        super().__init__(
+            max_num_items,
+            max_num_ems,
+            split_eps,
+            prob_split_one_item,
+            split_num_same_items,
+            container_dims,
+        )
+        self.mean_value = mean_value
+        self.standard_deviation_value = standard_deviation_value
+
+    def _generate_solved_instance(self, key: chex.PRNGKey) -> State:
+        """Generate the random instance with all items correctly packed."""
+        key, split_key = jax.random.split(key)
+        container = make_container(self.container_dims)
+
+        list_of_ems = [container] + (self.max_num_ems - 1) * [empty_ems()]
+        ems = tree_transpose(list_of_ems)
+        ems_mask = jnp.zeros(self.max_num_ems, bool)
+        nb_items_in_one_container = math.floor(0.5 * self.max_num_items)
+        # This will generate items_spaces and item_mask of size self.max_num_items, but there will
+        # only be up to nb_items_in_one_container unmasked usable items.
+        items_spaces, items_mask = self._split_container_into_items_spaces(
+            container, split_key, nb_items_in_one_container
+        )
+        key, split_key = jax.random.split(key)
+        item_values = self.mean_value + (
+            self.standard_deviation_value
+            * jax.random.normal(split_key, (len(items_mask),), jnp.float32)
+        )  # TODO:check it is ok that we are asigning random values to items that don't exist
+        items = valued_item_from_space_and_max_value(items_spaces, 2 * item_values)
+        extra_items = valued_item_from_space_and_max_value(items_spaces, item_values)
+        ones_of_size = jnp.ones(self.max_num_items - 2 * len(items_mask), jnp.int32)
+        # There will only be left over items if self.max_num_ems is not even
+        ones_float_of_size = jnp.ones(
+            self.max_num_items - 2 * len(items_mask), jnp.float32
+        )
+        zeros_of_size = jnp.zeros(self.max_num_items - 2 * len(items_mask), jnp.int32)
+        spare_items = ValuedItem(
+            ones_of_size * container.x2,
+            ones_of_size * container.y2,
+            ones_of_size * container.z2,
+            ones_float_of_size,
+        )
+        max_items = jax.tree_map(
+            lambda x, y, z: jnp.concatenate((x, y, z)), items, extra_items, spare_items
+        )
+        items_placable_at_beginning_mask = jnp.concatenate(
+            (items_mask, items_mask, zeros_of_size)
+        )
+        zeros_of_size_extra = jnp.zeros(items_mask.shape, bool)
+        items_placed_mask = jnp.concatenate(
+            (items_mask, zeros_of_size_extra, zeros_of_size)
+        )
+
+        sorted_ems_indexes = jnp.arange(0, self.max_num_ems, dtype=jnp.int32)
+
+        placed_items_locations = location_from_space(items_spaces)
+        remaining_items_locations = Location(
+            x=jnp.zeros(self.max_num_items - len(items_mask), jnp.int32),
+            y=jnp.zeros(self.max_num_items - len(items_mask), jnp.int32),
+            z=jnp.zeros(self.max_num_items - len(items_mask), jnp.int32),
+        )
+        all_item_locations = jax.tree_map(
+            lambda x, y: jnp.concatenate((x, y)),
+            placed_items_locations,
+            remaining_items_locations,
+        )
+        solution = State(
+            container=container,
+            ems=ems,
+            ems_mask=ems_mask,
+            items=max_items,
+            items_mask=items_placable_at_beginning_mask,
+            items_placed=items_placed_mask,
+            items_location=all_item_locations,
+            action_mask=None,
+            sorted_ems_indexes=sorted_ems_indexes,
+            key=key,
+        )
+        return solution
