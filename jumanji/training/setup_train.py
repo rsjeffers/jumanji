@@ -98,7 +98,16 @@ def _make_raw_env(cfg: DictConfig) -> Environment:
             )
         reward_string = cfg.env.env_settings.reward_fn
         reward_fn = getattr(jumanji.environments.packing.bin_pack.reward, reward_string)
-        env_settings_dict = {**cfg.env.env_settings, "reward_fn": reward_fn()}
+        generator_string = cfg.env.env_settings.generator
+        generator_settings = cfg.env.generator_settings
+        generator = getattr(
+            jumanji.environments.packing.bin_pack.generator, generator_string
+        )
+        env_settings_dict = {
+            **cfg.env.env_settings,
+            "generator": generator(**generator_settings),
+            "reward_fn": reward_fn(),
+        }
         env = BinPack(**env_settings_dict)
     return env
 

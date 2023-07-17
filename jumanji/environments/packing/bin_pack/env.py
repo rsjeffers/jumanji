@@ -23,7 +23,11 @@ from numpy.typing import NDArray
 
 from jumanji import specs
 from jumanji.env import Environment
-from jumanji.environments.packing.bin_pack.generator import Generator, RandomGenerator
+from jumanji.environments.packing.bin_pack.generator import (
+    VALUE_BASED_GENERATORS,
+    Generator,
+    RandomGenerator,
+)
 from jumanji.environments.packing.bin_pack.reward import DenseReward, RewardFn
 from jumanji.environments.packing.bin_pack.space import Space
 from jumanji.environments.packing.bin_pack.types import (
@@ -194,6 +198,7 @@ class BinPack(Environment[State]):
             - items_placed: BoundedArray (bool) of shape (max_num_items,).
             - action_mask: BoundedArray (bool) of shape (obs_num_ems, max_num_items).
         """
+        valued_items_used = isinstance(self.generator, VALUE_BASED_GENERATORS)
         obs_num_ems = self.obs_num_ems
         max_num_items = self.generator.max_num_items
         max_dim = max(self.generator.container_dims)
@@ -214,19 +219,36 @@ class BinPack(Environment[State]):
             }
         ems = specs.Spec(EMS, "EMSSpec", **ems_dict)
         ems_mask = specs.BoundedArray((obs_num_ems,), bool, False, True, "ems_mask")
+        items_axes = (
+            ["x_len", "y_len", "z_len", "value"]
+            if valued_items_used
+            else ["x_len", "y_len", "z_len"]
+        )
         if self.normalize_dimensions:
             items_dict = {
                 f"{axis}": specs.BoundedArray((max_num_items,), float, 0.0, 1.0, axis)
-                for axis in ["x_len", "y_len", "z_len"]
+                for axis in items_axes
             }
         else:
-            items_dict = {
-                f"{axis}": specs.BoundedArray(
-                    (max_num_items,), jnp.int32, 0, max_dim, axis
-                )
-                for axis in ["x_len", "y_len", "z_len"]
-            }
-        items = specs.Spec(Item, "ItemsSpec", **items_dict)
+            if valued_items_used:
+                items_dict = {
+                    f"{axis}": specs.BoundedArray(
+                        (max_num_items,), float, -jnp.inf, jnp.inf, axis
+                    )
+                    for axis in items_axes
+                }
+            else:
+                items_dict = {
+                    f"{axis}": specs.BoundedArray(
+                        (max_num_items,), jnp.int32, 0, max_dim, axis
+                    )
+                    for axis in items_axes
+                }
+        items = (
+            specs.Spec(ValuedItem, "ItemsSpec", **items_dict)
+            if valued_items_used
+            else specs.Spec(Item, "ItemsSpec", **items_dict)  # type: ignore
+        )
         items_mask = specs.BoundedArray(
             (max_num_items,), bool, False, True, "items_mask"
         )

@@ -2,13 +2,14 @@ name: bin_pack
 registered_version: BinPackValueBased-v0
 
 env_settings:
-    reward_fn: SparseReward
-    # extra_features:
-    #     - value
-    #     #- rotations_allowed
+    reward_fn: ValueBasedDenseReward
+    generator: RandomValueProblemGenerator
 
+generator_settings:
+    max_num_items: 20
+    max_num_ems: 40
+    split_num_same_items: 2
 
-    #DenseMaxValueReward
 
 network:
     num_transformer_layers: 2
@@ -17,14 +18,14 @@ network:
     transformer_mlp_units: [512]
 
 training:
-    num_epochs: 550
-    num_learner_steps_per_epoch: 100
+    num_epochs: 5
+    num_learner_steps_per_epoch: 5
     n_steps: 30
-    total_batch_size: 64
+    total_batch_size: 2
 
 evaluation:
-    eval_total_batch_size: 10000
-    greedy_eval_total_batch_size: 10000
+    eval_total_batch_size: 2
+    greedy_eval_total_batch_size: 2
 
 a2c:
     normalize_advantage: False

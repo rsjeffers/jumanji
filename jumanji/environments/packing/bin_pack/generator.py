@@ -44,7 +44,6 @@ from jumanji.tree_utils import tree_slice, tree_transpose
 TWENTY_FOOT_DIMS = (5870, 2330, 2200)
 
 CSV_COLUMNS = ["Item_Name", "Length", "Width", "Height", "Quantity"]
-OPTIONAL_COLUMNS = ["Value"]
 
 
 def make_container(container_dims: Tuple[int, int, int]) -> Container:
@@ -1009,8 +1008,8 @@ class RandomValueProblemGenerator(RandomGenerator):
         padding_of_float_ones = jnp.ones(
             self.max_num_items - 2 * len(items_mask), jnp.float32
         )
-        padding_of_int_zeros = jnp.zeros(
-            self.max_num_items - 2 * len(items_mask), jnp.int32
+        padding_of_bool_zeros = jnp.zeros(
+            self.max_num_items - 2 * len(items_mask), bool
         )
         padding_items = ValuedItem(
             padding_of_int_ones * container.x2,
@@ -1028,11 +1027,11 @@ class RandomValueProblemGenerator(RandomGenerator):
             padding_items,
         )
         items_placable_at_beginning_mask = jnp.concatenate(
-            (items_mask, items_mask, padding_of_int_zeros)
+            (items_mask, items_mask, padding_of_bool_zeros)
         )
         zeros_of_size_nb_extra_items = jnp.zeros(items_mask.shape, bool)
         items_placed_mask = jnp.concatenate(
-            (items_mask, zeros_of_size_nb_extra_items, padding_of_int_zeros)
+            (items_mask, zeros_of_size_nb_extra_items, padding_of_bool_zeros)
         )
 
         sorted_ems_indexes = jnp.arange(0, self.max_num_ems, dtype=jnp.int32)
@@ -1063,3 +1062,8 @@ class RandomValueProblemGenerator(RandomGenerator):
             key=key,
         )
         return solution
+
+
+VALUE_BASED_GENERATORS = (
+    RandomValueProblemGenerator,
+)  # TODO: add a csv random value generator
