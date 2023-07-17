@@ -44,6 +44,14 @@ from jumanji.tree_utils import tree_slice, tree_transpose
 TWENTY_FOOT_DIMS = (5870, 2330, 2200)
 
 CSV_COLUMNS = ["Item_Name", "Length", "Width", "Height", "Quantity"]
+CSV_VALUE_PROBLEM_COLUMNS = [
+    "Item_Name",
+    "Length",
+    "Width",
+    "Height",
+    "Quantity",
+    "Value",
+]
 
 
 def make_container(container_dims: Tuple[int, int, int]) -> Container:
@@ -895,10 +903,11 @@ class RandomValueProblemGenerator(RandomGenerator):
     as for the RandomGenerator but the number of items generated is no more than half of
     max_num_items. These items are then duplicated (having enough items to fit 2 containers
     perfectly). ValuedItems are created by sampling values from a normal distribution of mean and
-    standard deviation defined at initiation. The first set of items are set to have double the
-    value of their counterparts in the duplicated items. This is to avoid the agent depending only
-    on volume features for packing a container well (to do so it also needs to distinguish between 2
-    items that have the same shape but different values).
+    standard deviation defined at initiation. The first set of items are set to have a value equal
+    to their counterparts in the duplicated items plus the total value of the duplicated items.
+    This is to avoid the agent depending only on volume features for packing a container well (to do
+    so it also needs to distinguish between 2 items that have the same shape but different values)
+    but also to ensure that we can guarantee the optimal solution is packing the first set of items.
 
     Example:
         ```python
@@ -992,9 +1001,12 @@ class RandomValueProblemGenerator(RandomGenerator):
             self.standard_deviation_value
             * jax.random.normal(split_key, (len(items_mask),), jnp.float32)
         )
-        # Assign values to the items that are packed in the optimal solution.
+        total_value_of_generated_values = sum(item_values)
+        # Assign values to the items that are packed in the optimal solution. To ensure an optimal
+        # solution, the total value of the duplicated item values are added to the original
+        # generated item values.
         optimal_items = valued_item_from_space_and_max_value(
-            items_spaces, 2 * item_values
+            items_spaces, item_values + total_value_of_generated_values
         )
         # Duplicate the above items and assign values to them that are half their counterparts
         # above.
@@ -1064,6 +1076,149 @@ class RandomValueProblemGenerator(RandomGenerator):
         return solution
 
 
+class ValueProblemCSVGenerator(CSVGenerator):
+    """`Generator` that parses a CSV file to do active search on a single instance. It
+    always resets to the same instance defined by the CSV file. The generator can handle any
+    container dimensions but assumes a 20-ft container by default.
+
+    The CSV file is expected to have the following columns:
+    - Item_Name
+    - Length
+    - Width
+    - Height
+    - Quantity
+    - Value
+
+    Example with value:
+        Item_Name,Length,Width,Height,Quantity,Value
+        shape_1,1080,760,300,5,4.5
+        shape_2,1100,430,250,3,3.4
+    """
+
+    def __init__(
+        self,
+        csv_path: str,
+        max_num_ems: int,
+        container_dims: Tuple[int, int, int] = TWENTY_FOOT_DIMS,
+    ):
+        """Instantiate a `CSVGenerator` that generates the same instance (active search)
+        defined by a CSV file.
+
+        Args:
+            csv_path: path to the CSV file defining the instance to reset to.
+            max_num_ems: maximum number of ems the environment will handle. This defines the shape
+                of the EMS buffer that is kept in the environment state. The good number heavily
+                depends on the number of items (given by the CSV file).
+            container_dims: (length, width, height) tuple of integers corresponding to the
+                dimensions of the container in millimeters. By default, assume a 20-ft container.
+        """
+        super().__init__(csv_path, max_num_ems, container_dims)
+
+    def _parse_csv_file(
+        self, csv_path: str, max_num_ems: int, container_dims: Tuple[int, int, int]
+    ) -> State:
+        """Create an instance by parsing a CSV file.
+
+        Args:
+            csv_path: path to the CSV file to parse that defines the instance to reset to.
+            max_num_ems: maximum number of ems the environment will handle. This defines the shape
+                of the EMS buffer that is kept in the environment state.
+            container_dims: (length, width, height) tuple of integers corresponding to the
+                dimensions of the container in millimeters.
+
+        Returns:
+            `BinPack` state that contains the instance defined in the CSV file.
+        """
+        container = make_container(container_dims)
+
+        # Initialize the EMSs
+        list_of_ems = [container] + (max_num_ems - 1) * [empty_ems()]
+        ems = tree_transpose(list_of_ems)
+        ems_mask = jnp.zeros(max_num_ems, bool).at[0].set(True)
+
+        # Parse the CSV file to generate the items
+        rows = self._read_valued_csv(csv_path)
+        list_of_items = self._generate_list_of_valued_items(rows)
+        items = tree_transpose(list_of_items)
+
+        # Initialize items mask and location
+        num_items = len(list_of_items)
+        items_mask = jnp.ones(num_items, bool)
+        items_placed = jnp.zeros(num_items, bool)
+        items_location = Location(*tuple(jnp.zeros((3, num_items), jnp.int32)))
+
+        sorted_ems_indexes = jnp.arange(0, max_num_ems, dtype=jnp.int32)
+        reset_state = State(
+            container=container,
+            ems=ems,
+            ems_mask=ems_mask,
+            items=items,
+            items_mask=items_mask,
+            items_placed=items_placed,
+            items_location=items_location,
+            action_mask=None,
+            sorted_ems_indexes=sorted_ems_indexes,
+            key=jax.random.PRNGKey(0),
+        )
+
+        return reset_state
+
+    def _read_valued_csv(
+        self, csv_path: str
+    ) -> List[Tuple[str, int, int, int, int, float]]:
+        rows = []
+        with open(csv_path, newline="") as csvfile:
+            reader = csv.reader(csvfile)
+            for row_index, row in enumerate(reader):
+                if row_index == 0:
+                    if len(row) != len(CSV_VALUE_PROBLEM_COLUMNS):
+                        raise ValueError(
+                            "Got wrong number of columns, expected: "
+                            f"{', '.join(CSV_VALUE_PROBLEM_COLUMNS)}"
+                        )
+                    elif row != CSV_VALUE_PROBLEM_COLUMNS:
+                        raise ValueError("Columns in wrong order")
+                else:
+                    # Column order: Item_Name, Length, Width, Height, Quantity, Value.
+                    rows.append(
+                        (
+                            row[0],
+                            int(row[1]),
+                            int(row[2]),
+                            int(row[3]),
+                            int(row[4]),
+                            float(row[5]),
+                        )
+                    )
+        return rows
+
+    def _generate_list_of_valued_items(
+        self, rows: List[Tuple[str, int, int, int, int, float]]
+    ) -> List[ValuedItem]:
+        """Generate the list of items from a Pandas DataFrame.
+
+        Args:
+            rows: List[tuple] describing the items for the corresponding instance.
+
+        Returns:
+            List of `ValuedItem` flattened so that identical items (quantity > 1) are copied
+            according to their quantity.
+        """
+        list_of_items = []
+        for (_, x_len, y_len, z_len, quantity, value) in rows:
+            identical_items = quantity * [
+                ValuedItem(
+                    x_len=jnp.array(x_len, jnp.int32),
+                    y_len=jnp.array(y_len, jnp.int32),
+                    z_len=jnp.array(z_len, jnp.int32),
+                    value=jnp.array(value, jnp.float32),
+                )
+            ]
+            list_of_items.extend(identical_items)
+        return list_of_items
+
+
 VALUE_BASED_GENERATORS = (
     RandomValueProblemGenerator,
-)  # TODO: add a csv random value generator
+    ValueProblemCSVGenerator,
+)
