@@ -276,9 +276,6 @@ class TestRandomValueProblemGenerator:
         assert_trees_are_different(
             solution_state1.items_location, state1.items_location
         )
-        # TODO: don't know what this should be can't there be spare items that will be masked and
-        # not placed?
-        assert jnp.all(solution_state1.items_placed | ~solution_state1.items_mask)
         # Checks that the perfect solution fills the container exactly
         placed_items_volume = (
             item_volume(solution_state1.items) * solution_state1.items_placed
