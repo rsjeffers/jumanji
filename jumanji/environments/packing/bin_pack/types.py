@@ -88,6 +88,12 @@ def item_volume(item: ItemType) -> chex.Array:
     return x_len * y_len * z_len
 
 
+def item_value(item: ItemType) -> chex.Array:
+    if not isinstance(item, ValuedItem):
+        raise ValueError(f"Trying to obtain the value of an item of type {type(item)}")
+    return jnp.asarray(item.value, float)
+
+
 class Location(NamedTuple):
     x: chex.Numeric
     y: chex.Numeric

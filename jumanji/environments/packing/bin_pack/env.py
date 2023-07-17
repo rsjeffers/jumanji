@@ -499,7 +499,7 @@ class BinPack(Environment[State]):
                 z_len,
                 _,
             ) = container_item = valued_item_from_space_and_max_value(
-                state.container, jnp.max(state.items.value)
+                state.container, jnp.max(state.items.value * state.items_mask)
             )
         else:
             items = cast(Item, items)

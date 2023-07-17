@@ -114,7 +114,7 @@ class ValueBasedDenseReward(RewardFn):
         state.items = cast(ValuedItem, state.items)
         _, item_id = action
         chosen_item_value = tree_slice(state.items, item_id).value
-        instance_total_value = jnp.sum(state.items.value)
+        instance_total_value = jnp.sum(state.items.value * state.items_mask)
         reward = chosen_item_value / instance_total_value
         reward: float = jax.lax.select(is_valid, reward, jnp.array(0, float))
         return reward
@@ -141,7 +141,7 @@ class ValueBasedSparseReward(RewardFn):
             """Returns volume utilization between 0.0 and 1.0."""
             state.items = cast(ValuedItem, state.items)
             items_value = jnp.sum(state.items.value * state.items_placed)
-            instance_total_value = jnp.sum(state.items.value)
+            instance_total_value = jnp.sum(state.items.value * state.items_mask)
             return items_value / instance_total_value
 
         reward: float = jax.lax.cond(
