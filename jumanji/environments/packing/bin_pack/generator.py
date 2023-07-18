@@ -1004,7 +1004,9 @@ class RandomValueProblemGenerator(RandomGenerator):
         items_spaces, items_mask = self._split_container_into_items_spaces(
             container, split_key, nb_items_in_one_container
         )
-        # Randomly generate values that will then be doubled for the above items
+        # Randomly generate values that will then be increased by a value of
+        # total_value_of_generated_values to generate a "perfect instance" with a known optimal
+        # solution.
         key, split_key = jax.random.split(key)
         item_values = self.mean_value + (
             self.standard_deviation_value
