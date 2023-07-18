@@ -286,6 +286,7 @@ class TestRandomValueProblemGenerator:
             item_volume(solution_state1.items) * solution_state1.items_mask
         ).sum()
         assert not jnp.isclose(items_volume, solution_state1.container.volume())
+        assert items_volume > solution_state1.container.volume()
 
         # Generates a solution to a new instance (will be new because a different random key).
         solution_state2 = generate_solution(jax.random.PRNGKey(2))
