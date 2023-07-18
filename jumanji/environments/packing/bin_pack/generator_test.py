@@ -265,8 +265,6 @@ class TestRandomValueProblemGenerator:
         # The items do not change whether they are packed or not, it is just the items-placed mask
         # that is different.
         assert_trees_are_close(solution_state1.items, state1.items)
-        # This is because the solution is generated first, in a real solution the items mask would
-        # be all false at the end.
         assert_trees_are_equal(solution_state1.items_mask, state1.items_mask)
         # There should be no items placed in state1 whereas half of them will be placed in the
         # perfect solution.
