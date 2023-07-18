@@ -375,6 +375,9 @@ class ToyGenerator(Generator):
             items_location=items_location,
             action_mask=None,
             sorted_ems_indexes=sorted_ems_indexes,
+            # For non value based optimisation set these to dummy values by default
+            instance_max_item_value=0.0,
+            instance_total_value=0.0,
             key=jax.random.PRNGKey(0),
         )
 
@@ -478,6 +481,9 @@ class CSVGenerator(Generator):
             items_location=items_location,
             action_mask=None,
             sorted_ems_indexes=sorted_ems_indexes,
+            # For non value based optimisation set these to dummy values by default
+            instance_max_item_value=0.0,
+            instance_total_value=0.0,
             key=jax.random.PRNGKey(0),
         )
 
@@ -687,6 +693,9 @@ class RandomGenerator(Generator):
             items_location=all_item_locations,
             action_mask=None,
             sorted_ems_indexes=sorted_ems_indexes,
+            # For non value based optimisation set these to dummy values by default
+            instance_max_item_value=0.0,
+            instance_total_value=0.0,
             key=key,
         )
         return solution
@@ -1061,6 +1070,11 @@ class RandomValueProblemGenerator(RandomGenerator):
             remaining_items_locations,
         )
 
+        instance_total_value = jnp.sum(items.value * items_placable_at_beginning_mask)
+        instance_max_item_value = jnp.max(
+            items.value * items_placable_at_beginning_mask
+        )
+
         solution = State(
             container=container,
             ems=ems,
@@ -1071,6 +1085,8 @@ class RandomValueProblemGenerator(RandomGenerator):
             items_location=all_item_locations,
             action_mask=None,
             sorted_ems_indexes=sorted_ems_indexes,
+            instance_max_item_value=instance_max_item_value,
+            instance_total_value=instance_total_value,
             key=key,
         )
         return solution
@@ -1148,6 +1164,10 @@ class ValueProblemCSVGenerator(CSVGenerator):
         items_location = Location(*tuple(jnp.zeros((3, num_items), jnp.int32)))
 
         sorted_ems_indexes = jnp.arange(0, max_num_ems, dtype=jnp.int32)
+
+        instance_total_value = jnp.sum(items.value * items_mask)
+        instance_max_item_value = jnp.max(items.value * items_mask)
+
         reset_state = State(
             container=container,
             ems=ems,
@@ -1158,6 +1178,8 @@ class ValueProblemCSVGenerator(CSVGenerator):
             items_location=items_location,
             action_mask=None,
             sorted_ems_indexes=sorted_ems_indexes,
+            instance_max_item_value=instance_max_item_value,
+            instance_total_value=instance_total_value,
             key=jax.random.PRNGKey(0),
         )
 

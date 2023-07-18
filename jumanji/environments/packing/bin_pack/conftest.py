@@ -84,6 +84,9 @@ class DummyGenerator(Generator):
             ),
             action_mask=None,
             sorted_ems_indexes=jnp.arange(self.max_num_ems, dtype=jnp.int32),
+            # For non value based optimisation set these to dummy values by default
+            instance_max_item_value=0.0,
+            instance_total_value=0.0,
             # For deterministic instance generators we always set the key to 0.
             key=jax.random.PRNGKey(0),
         )
@@ -133,6 +136,9 @@ class DummyValueGenerator(Generator):
             ),
             action_mask=None,
             sorted_ems_indexes=jnp.arange(self.max_num_ems, dtype=jnp.int32),
+            # For non value based optimisation set these to dummy values by default
+            instance_max_item_value=2.0,
+            instance_total_value=5.5,
             # For deterministic instance generators we always set the key to 0.
             key=jax.random.PRNGKey(0),
         )

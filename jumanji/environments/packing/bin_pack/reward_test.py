@@ -108,11 +108,11 @@ def test__sparse_value_reward(bin_pack_sparse_value_reward: BinPack) -> None:
     assert timestep.last()
     item = jumanji.tree_utils.tree_slice(timestep.observation.items, action[1])
     instance_total_value = jnp.sum(state.items.value * state.items_mask)
-    instance_max_value = jnp.max(state.items.value * state.items_mask)
-    # Multiply by instance_max_value to undo the value normalisation of the item and divide
+    instance_max_item_value = jnp.max(state.items.value * state.items_mask)
+    # Multiply by instance_max_item_value to undo the value normalisation of the item and divide
     # by instance_total_value since this is what is used for reward normalisation.
     assert jnp.isclose(
-        reward, item_value(item) * instance_max_value / instance_total_value
+        reward, item_value(item) * instance_max_item_value / instance_total_value
     )
 
 
@@ -168,11 +168,12 @@ def test_dense_value_reward(bin_pack_dense_value_reward: BinPack) -> None:
         if is_valid:
             item = jumanji.tree_utils.tree_slice(timestep.observation.items, item_id)
             instance_total_value = jnp.sum(state.items.value * state.items_mask)  # type: ignore
-            instance_max_value = jnp.max(state.items.value * state.items_mask)  # type: ignore
-            # Multiply by instance_max_value to undo the value normalisation of the item and divide
-            # by instance_total_value since this is what is used for reward normalisation.
+            instance_max_item_value = jnp.max(state.items.value * state.items_mask)  # type: ignore
+            # Multiply by instance_max_item_value to undo the value normalisation of the item and
+            # divide by instance_total_value since this is what is used for reward normalisation.
             assert jnp.isclose(
-                reward, item_value(item) * instance_max_value / instance_total_value
+                reward,
+                item_value(item) * instance_max_item_value / instance_total_value,
             )
         else:
             assert reward == 0
