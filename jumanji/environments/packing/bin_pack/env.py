@@ -193,7 +193,8 @@ class BinPack(Environment[State]):
                 - if normalize_dimensions:
                     tree of BoundedArray (float) of shape (max_num_items,).
                 - else:
-                    tree of BoundedArray (int32) of shape (max_num_items,).
+                    tree of BoundedArray (int32) of shape (max_num_items,) though float is used for
+                    values if they are valued items.
             - items_mask: BoundedArray (bool) of shape (max_num_items,).
             - items_placed: BoundedArray (bool) of shape (max_num_items,).
             - action_mask: BoundedArray (bool) of shape (obs_num_ems, max_num_items).
@@ -219,31 +220,10 @@ class BinPack(Environment[State]):
             }
         ems = specs.Spec(EMS, "EMSSpec", **ems_dict)
         ems_mask = specs.BoundedArray((obs_num_ems,), bool, False, True, "ems_mask")
-        items_axes = (
-            ["x_len", "y_len", "z_len", "value"]
-            if valued_items_used
-            else ["x_len", "y_len", "z_len"]
-        )
-        if self.normalize_dimensions:
-            items_dict = {
-                f"{axis}": specs.BoundedArray((max_num_items,), float, 0.0, 1.0, axis)
-                for axis in items_axes
-            }
+        if valued_items_used:
+            items_dict = self._items_dict_for_valued_items(max_num_items, max_dim)
         else:
-            if valued_items_used:
-                items_dict = {
-                    f"{axis}": specs.BoundedArray(
-                        (max_num_items,), float, -jnp.inf, jnp.inf, axis
-                    )
-                    for axis in items_axes
-                }
-            else:
-                items_dict = {
-                    f"{axis}": specs.BoundedArray(
-                        (max_num_items,), jnp.int32, 0, max_dim, axis
-                    )
-                    for axis in items_axes
-                }
+            items_dict = self._items_dict_for_non_valued_items(max_num_items, max_dim)
         items = (
             specs.Spec(ValuedItem, "ItemsSpec", **items_dict)
             if valued_items_used
@@ -272,6 +252,55 @@ class BinPack(Environment[State]):
             items_placed=items_placed,
             action_mask=action_mask,
         )
+
+    def _items_dict_for_valued_items(self, max_num_items: int, max_dim: int) -> Dict:
+        """Set the items_dict specs to the correct bounded array for valued items depending
+        on whether features are to be normalized or not.
+
+        Args:
+            max_num_items: the maximum number of items that can be in an instance.
+            max_dim: The maximum dimension in this given instance.
+
+        Returns:
+            A dictionary with string keys of the item features and specs BoundedArray as values.
+        """
+        items_dict = self._items_dict_for_non_valued_items(max_num_items, max_dim)
+        if self.normalize_dimensions:
+            items_dict["value"] = specs.BoundedArray(
+                (self.generator.max_num_items,), float, -1.0, 1.0, "value"
+            )
+        else:
+            items_dict["value"] = specs.BoundedArray(
+                (self.generator.max_num_items,), float, -jnp.inf, jnp.inf, "value"
+            )
+        return items_dict
+
+    def _items_dict_for_non_valued_items(
+        self, max_num_items: int, max_dim: int
+    ) -> Dict:
+        """Set the items_dict specs to the correct bounded array for non valued items depending
+        on whether dimensions are to be normalized or not.
+
+        Args:
+            max_num_items: the maximum number of items that can be in an instance.
+            max_dim: The maximum dimension in this given instance.
+
+        Returns:
+            A dictionary with string keys of the item features and specs BoundedArray as values.
+        """
+        if self.normalize_dimensions:
+            return {
+                f"{axis}": specs.BoundedArray(
+                    (self.generator.max_num_items,), float, 0.0, 1.0, axis
+                )
+                for axis in ["x_len", "y_len", "z_len"]
+            }
+        return {
+            f"{axis}": specs.BoundedArray(
+                (self.generator.max_num_items,), jnp.int32, 0, max_dim, axis
+            )
+            for axis in ["x_len", "y_len", "z_len"]
+        }
 
     def action_spec(self) -> specs.MultiDiscreteArray:
         """Specifications of the action expected by the `BinPack` environment.
@@ -499,7 +528,7 @@ class BinPack(Environment[State]):
                 z_len,
                 _,
             ) = container_item = valued_item_from_space_and_max_value(
-                state.container, state.instance_max_item_value
+                state.container, state.instance_max_item_value_magnitude
             )
         else:
             items = cast(Item, items)

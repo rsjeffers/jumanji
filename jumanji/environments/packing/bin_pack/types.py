@@ -156,7 +156,7 @@ class State:
     items_location: Location  # leaves of shape (max_num_items,)
     action_mask: Optional[chex.Array]  # (obs_num_ems, max_num_items)
     sorted_ems_indexes: chex.Array  # (max_num_ems,)
-    instance_max_item_value: chex.Numeric  # leaves of shape () - only for value based optimisation
+    instance_max_item_value_magnitude: chex.Numeric  # () - only for value based optimisation
     instance_total_value: chex.Numeric  # leaves of shape () - only for value based optimisation
     key: chex.PRNGKey  # (2,)
 
