@@ -107,10 +107,8 @@ def test__sparse_value_reward(bin_pack_sparse_value_reward: BinPack) -> None:
     reward = reward_fn(state, action, next_state, is_valid=False, is_done=True)
     assert timestep.last()
     item = jumanji.tree_utils.tree_slice(timestep.observation.items, action[1])
-    instance_total_value = jnp.sum(state.items.value * state.items_mask)
-    instance_max_item_value_magnitude = jnp.max(
-        abs(state.items.value * state.items_mask)
-    )
+    instance_total_value = state.instance_total_value
+    instance_max_item_value_magnitude = state.instance_max_item_value_magnitude
     # Multiply by instance_max_item_value_magnitude to undo the value normalisation of the item and
     # divide by instance_total_value since this is what is used for reward normalisation.
     assert jnp.isclose(
@@ -170,10 +168,8 @@ def test_dense_value_reward(bin_pack_dense_value_reward: BinPack) -> None:
         assert reward == next_timestep.reward
         if is_valid:
             item = jumanji.tree_utils.tree_slice(timestep.observation.items, item_id)
-            instance_total_value = jnp.sum(state.items.value * state.items_mask)  # type: ignore
-            instance_max_item_value_magnitude = jnp.max(
-                abs(state.items.value * state.items_mask)  # type: ignore
-            )
+            instance_total_value = state.instance_total_value
+            instance_max_item_value_magnitude = state.instance_max_item_value_magnitude
             # Multiply by instance_max_item_value_magnitude to undo the value normalisation of the
             # item and divide by instance_total_value since this is what is used for reward
             # normalisation.
