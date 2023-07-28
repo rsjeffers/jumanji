@@ -1368,14 +1368,15 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
         ems_mask = jnp.zeros(self.max_num_ems, bool)
 
         nb_items_in_one_container = math.floor(1 / target_volume * self.max_num_items)
-        items_spaces, items_mask = self._split_container_into_items_spaces(
+        items_spaces, final_items_mask = self._split_container_into_items_spaces(
             container, split_key, nb_items_in_one_container
         )
         key, split_key = jax.random.split(key)
         item_values = self.mean_item_value + (
             self.std_item_value
-            * jax.random.normal(split_key, (len(items_mask),), jnp.float32)
+            * jax.random.normal(split_key, (len(final_items_mask),), jnp.float32)
         )
+        len_inital_items_mask = final_items_mask.shape[0]
         items = valued_item_from_space_and_max_value(items_spaces, item_values)
         for _ in range(1, target_volume):
             items_spaces, items_mask = self._split_container_into_items_spaces(
@@ -1398,6 +1399,7 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
                 tmp_items,
                 items,
             )
+            final_items_mask = jnp.concatenate((final_items_mask, items_mask))
 
         # If self.max_num_items is an odd number, the concatenation of items and extra_items would
         # result in a tree size of < self.max_num_items. In this case, we add padding.
@@ -1407,11 +1409,13 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
         )
 
         items_placable_at_beginning_mask = jnp.concatenate(
-            (items_mask, items_mask, padding_of_bool_zeros)
+            (final_items_mask, padding_of_bool_zeros)
         )
-        zeros_of_size_nb_extra_items = jnp.zeros(items_mask.shape, bool)
+        zeros_of_size_nb_extra_items = jnp.zeros(
+            final_items_mask[0] - len_inital_items_mask, bool
+        )
         items_placed_mask = jnp.concatenate(
-            (items_mask, zeros_of_size_nb_extra_items, padding_of_bool_zeros)
+            (final_items_mask, zeros_of_size_nb_extra_items, padding_of_bool_zeros)
         )
 
         sorted_ems_indexes = jnp.arange(0, self.max_num_ems, dtype=jnp.int32)
