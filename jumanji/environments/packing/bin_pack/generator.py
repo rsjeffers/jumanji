@@ -1332,14 +1332,8 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
     ):
         """
         Args:
-            is_rotation_allowed: whether the generator has to generate instances where item
-            rotation is possible. Defaults to False.
-            is_value_based: whether the generator has to generator has to generate
-            instance with values. Defaults to False.
-            mean_item_value: The mean value of the normal distribution from which the item values
-                will be sampled.
-            std_item_value: The standard deviation of the normal distribution from which
-                the item values will be sampled.
+            min_target_volume: minimal volume of the items in an instance in terms of containers.
+            min_target_volume: maximum volume of the items in an instance in terms of containers.
         Raises:
             ValueError: When the generator has to generate value based instances but the mean and
             std aren't provided.
@@ -1356,17 +1350,8 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
             mean_item_value,
             std_item_value,
         )
-        self.mean_item_value = mean_item_value
-        self.std_item_value = std_item_value
         self.min_target_volume = min_target_volume
         self.max_target_volume = max_target_volume
-        if mean_item_value is None or std_item_value is None:
-            std_name = "std_item_value"
-            raise ValueError(
-                "Value Based generator not provided with"
-                + f"{'mean_item_value attribute' if mean_item_value is None else ''}"
-                + f"{f'{std_name} attribute' if std_item_value is None else ''}"
-            )
 
     def _generate_value_based_solved_instance(  # type: ignore
         self, key: chex.PRNGKey, target_volume: int
@@ -1382,55 +1367,45 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
         ems = tree_transpose(list_of_ems)
         ems_mask = jnp.zeros(self.max_num_ems, bool)
 
-        # Create less than half of max_num_items item spaces by splitting up a container. This
-        # will lead to nb_items_in_one_container items that fit perfectly into a single container.
         nb_items_in_one_container = math.floor(1 / target_volume * self.max_num_items)
-        # This will generate items_spaces and item_mask of size nb_items_in_one_container.
         items_spaces, items_mask = self._split_container_into_items_spaces(
             container, split_key, nb_items_in_one_container
         )
-        # Randomly generate values that will then be increased by a value of
-        # total_value_of_generated_values to generate a "perfect instance" with a known optimal
-        # solution.
         key, split_key = jax.random.split(key)
         item_values = self.mean_item_value + (
             self.std_item_value
             * jax.random.normal(split_key, (len(items_mask),), jnp.float32)
         )
-        # Assign values to the items that are packed in the optimal solution. To ensure an optimal
-        # solution, the total value of the duplicated item values are added to the original
-        # generated item values.
-        optimal_items = valued_item_from_space_and_max_value(items_spaces, item_values)
-        # Duplicate the above items and assign values to them that are half their counterparts
-        # above.
-        extra_items = valued_item_from_space_and_max_value(items_spaces, item_values)
+        items = valued_item_from_space_and_max_value(items_spaces, item_values)
+        for _ in range(1, target_volume):
+            items_spaces, items_mask = self._split_container_into_items_spaces(
+                container, split_key, nb_items_in_one_container
+            )
+            # Randomly generate values that will then be increased by a value of
+            # total_value_of_generated_values to generate a "perfect instance" with a known optimal
+            # solution.
+            key, split_key = jax.random.split(key)
+            item_values = self.mean_item_value + (
+                self.std_item_value
+                * jax.random.normal(split_key, (len(items_mask),), jnp.float32)
+            )
+            tmp_items = valued_item_from_space_and_max_value(items_spaces, item_values)
+
+            # Create the solution state by creating trees of size self.max_num_items for items,
+            # items_placable_at_beginning_mask and items_placed_mask.
+            items = jax.tree_map(
+                lambda x, y: jnp.concatenate((x, y)),
+                tmp_items,
+                items,
+            )
 
         # If self.max_num_items is an odd number, the concatenation of items and extra_items would
         # result in a tree size of < self.max_num_items. In this case, we add padding.
-        padding_of_int_ones = jnp.ones(
-            self.max_num_items - target_volume * len(items_mask), jnp.int32
-        )
-        padding_of_float_ones = jnp.ones(
-            self.max_num_items - target_volume * len(items_mask), jnp.float32
-        )
+
         padding_of_bool_zeros = jnp.zeros(
             self.max_num_items - target_volume * len(items_mask), bool
         )
-        padding_items = ValuedItem(
-            padding_of_int_ones * container.x2,
-            padding_of_int_ones * container.y2,
-            padding_of_int_ones * container.z2,
-            padding_of_float_ones,
-        )
 
-        # Create the solution state by creating trees of size self.max_num_items for items,
-        # items_placable_at_beginning_mask and items_placed_mask.
-        items = jax.tree_map(
-            lambda x, y, z: jnp.concatenate((x, y, z)),
-            optimal_items,
-            extra_items,
-            padding_items,
-        )
         items_placable_at_beginning_mask = jnp.concatenate(
             (items_mask, items_mask, padding_of_bool_zeros)
         )
