@@ -1329,6 +1329,7 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
         prob_split_one_item: float = 0.7,
         split_num_same_items: int = 5,
         container_dims: Tuple[int, int, int] = TWENTY_FOOT_DIMS,
+        is_evaluation: Optional[bool] = False,
     ):
         """
         Args:
@@ -1350,6 +1351,8 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
             mean_item_value,
             std_item_value,
         )
+        self.generated_instance_optimal_value = jnp.inf
+        self.is_evaluation = is_evaluation
         self.min_target_volume = min_target_volume
         self.max_target_volume = max_target_volume
 
@@ -1359,7 +1362,6 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
         """Generate the random instance with 1/target_volume of all items correctly packed. The
         other part of the generated items remain unpacked.
         """
-
         key, split_key = jax.random.split(key)
         container = make_container(self.container_dims)
 
@@ -1368,75 +1370,87 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
         ems_mask = jnp.zeros(self.max_num_ems, bool)
 
         nb_items_in_one_container = math.floor(1 / target_volume * self.max_num_items)
-        items_spaces, final_items_mask = self._split_container_into_items_spaces(
+        first_items_spaces, first_items_mask = self._split_container_into_items_spaces(
             container, split_key, nb_items_in_one_container
         )
-        key, split_key = jax.random.split(key)
-        item_values = self.mean_item_value + (
-            self.std_item_value
-            * jax.random.normal(split_key, (len(final_items_mask),), jnp.float32)
-        )
-        len_inital_items_mask = final_items_mask.shape[0]
-        items = valued_item_from_space_and_max_value(items_spaces, item_values)
+        len_first_items_mask = len(first_items_mask)
+        final_items_mask = first_items_mask
+        all_items_spaces = first_items_spaces
         for _ in range(1, target_volume):
-            items_spaces, items_mask = self._split_container_into_items_spaces(
+            tmp_items_spaces, tmp_items_mask = self._split_container_into_items_spaces(
                 container, split_key, nb_items_in_one_container
             )
-            # Randomly generate values that will then be increased by a value of
-            # total_value_of_generated_values to generate a "perfect instance" with a known optimal
-            # solution.
-            key, split_key = jax.random.split(key)
-            item_values = self.mean_item_value + (
-                self.std_item_value
-                * jax.random.normal(split_key, (len(items_mask),), jnp.float32)
-            )
-            tmp_items = valued_item_from_space_and_max_value(items_spaces, item_values)
-
-            # Create the solution state by creating trees of size self.max_num_items for items,
-            # items_placable_at_beginning_mask and items_placed_mask.
-            items = jax.tree_map(
+            all_items_spaces = jax.tree_map(
                 lambda x, y: jnp.concatenate((x, y)),
-                tmp_items,
-                items,
+                all_items_spaces,
+                tmp_items_spaces,
             )
-            final_items_mask = jnp.concatenate((final_items_mask, items_mask))
+            final_items_mask = jnp.concatenate((final_items_mask, tmp_items_mask))
 
-        # If self.max_num_items is an odd number, the concatenation of items and extra_items would
-        # result in a tree size of < self.max_num_items. In this case, we add padding.
+        # In case nb_items_in_one_container * target_volume  < max_nb_items, add the difference as
+        # masked zero volume items.
+        nb_extra_items = self.max_num_items - len(final_items_mask)
+        extra_items_spaces = Space(
+            x1=jnp.zeros(nb_extra_items),
+            x2=jnp.zeros(nb_extra_items),
+            y1=jnp.zeros(nb_extra_items),
+            y2=jnp.zeros(nb_extra_items),
+            z1=jnp.zeros(nb_extra_items),
+            z2=jnp.zeros(nb_extra_items),
+        )
+        extra_items_mask = jnp.zeros(nb_extra_items, bool)
+        all_items_spaces = jax.tree_map(
+            lambda x, y: jnp.concatenate((x, y)),
+            all_items_spaces,
+            extra_items_spaces,
+        )
+        final_items_mask = jnp.concatenate((final_items_mask, extra_items_mask))
+        item_values = self.mean_item_value + (
+            self.std_item_value
+            * jax.random.normal(split_key, (self.max_num_items,), jnp.float32)
+        )
+        if self.is_evaluation:
+            total_instance_value = jnp.sum(item_values)
+            item_values, _ = jax.lax.scan(
+                lambda item_values, item_mask_ind: (
+                    item_values.at[item_mask_ind].set(
+                        (item_values[item_mask_ind] + total_instance_value)
+                        * first_items_mask[item_mask_ind]
+                    ),
+                    (item_values[item_mask_ind] + total_instance_value)
+                    * first_items_mask[item_mask_ind],
+                ),
+                item_values,
+                jnp.arange(len(first_items_mask)),
+            )
+            optimal_value = jnp.sum(_)
+            self.generated_instance_optimal_value = optimal_value
+        items = valued_item_from_space_and_max_value(all_items_spaces, item_values)
 
-        padding_of_bool_zeros = jnp.zeros(
-            self.max_num_items - target_volume * len(items_mask), bool
-        )
-
-        items_placable_at_beginning_mask = jnp.concatenate(
-            (final_items_mask, padding_of_bool_zeros)
-        )
-        zeros_of_size_nb_extra_items = jnp.zeros(
-            final_items_mask[0] - len_inital_items_mask, bool
-        )
+        # Only the items of the first container are placed.
         items_placed_mask = jnp.concatenate(
-            (final_items_mask, zeros_of_size_nb_extra_items, padding_of_bool_zeros)
+            (
+                first_items_mask,
+                jnp.zeros(self.max_num_items - len_first_items_mask, bool),
+            )
         )
-
         sorted_ems_indexes = jnp.arange(0, self.max_num_ems, dtype=jnp.int32)
 
         # Create locations for placed, unplaced and padded items.
-        placed_items_locations = location_from_space(items_spaces)
+        placed_items_locations = location_from_space(first_items_spaces)
 
         remaining_items_locations = Location(
-            x=jnp.zeros(self.max_num_items - len(items_mask), jnp.int32),
-            y=jnp.zeros(self.max_num_items - len(items_mask), jnp.int32),
-            z=jnp.zeros(self.max_num_items - len(items_mask), jnp.int32),
+            x=jnp.zeros(self.max_num_items - len_first_items_mask, jnp.int32),
+            y=jnp.zeros(self.max_num_items - len_first_items_mask, jnp.int32),
+            z=jnp.zeros(self.max_num_items - len_first_items_mask, jnp.int32),
         )
         all_item_locations = jax.tree_map(
             lambda x, y: jnp.concatenate((x, y)),
             placed_items_locations,
             remaining_items_locations,
         )
-        instance_total_value = jnp.sum(items.value * items_placable_at_beginning_mask)
-        instance_max_item_value_magnitude = jnp.max(
-            abs(items.value * items_placable_at_beginning_mask)
-        )
+        instance_total_value = jnp.sum(items.value * final_items_mask)
+        instance_max_item_value_magnitude = jnp.max(abs(items.value * final_items_mask))
 
         solution = State(
             container=container,
@@ -1444,7 +1458,7 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
             ems_mask=ems_mask,
             items=items,
             nb_items=len(items.x_len),
-            items_mask=items_placable_at_beginning_mask,
+            items_mask=final_items_mask,
             items_placed=items_placed_mask,
             items_location=all_item_locations,
             action_mask=None,

@@ -88,7 +88,7 @@ def setup_logger(cfg: DictConfig) -> Logger:
     return logger
 
 
-def _make_raw_env(cfg: DictConfig) -> Environment:
+def _make_raw_env(cfg: DictConfig, eval: bool = False) -> Environment:
     try:
         env = jumanji.make(cfg.env.registered_version)
     except ValueError as error:
@@ -105,6 +105,9 @@ def _make_raw_env(cfg: DictConfig) -> Environment:
         reward_fn = getattr(jumanji.environments.packing.bin_pack.reward, reward_string)
         generator_string = cfg.env.env_settings.generator
         generator_settings = cfg.env.generator_settings
+        if eval:
+            generator_settings = dict(generator_settings)
+            generator_settings["is_evaluation"] = True
         generator = getattr(
             jumanji.environments.packing.bin_pack.generator, generator_string
         )
@@ -398,7 +401,7 @@ def _setup_actor_critic_neworks(  # noqa: CCR001
 
 
 def setup_evaluators(cfg: DictConfig, agent: Agent) -> Tuple[Evaluator, Evaluator]:
-    env = _make_raw_env(cfg)
+    env = _make_raw_env(cfg, eval=True)
     stochastic_eval = Evaluator(
         eval_env=env,
         agent=agent,

@@ -26,6 +26,7 @@ from jumanji import specs
 from jumanji.env import Environment
 from jumanji.environments.packing.bin_pack.generator import (
     ExtendedRandomGenerator,
+    ExtendedTrainingGenerator,
     Generator,
     RandomGenerator,
 )
@@ -1010,6 +1011,7 @@ class ExtendedBinPack(BinPack):
         viewer: Optional[Viewer[State]] = None,
         mean_item_value: Optional[float] = None,
         std_item_value: Optional[float] = None,
+        full_support: Optional[bool] = False,
     ):
         generator = generator or ExtendedRandomGenerator(
             is_rotation_allowed=is_rotation_allowed,
@@ -1025,7 +1027,13 @@ class ExtendedBinPack(BinPack):
             render_mode="human",
         )
         super().__init__(
-            generator, obs_num_ems, reward_fn, normalize_dimensions, debug, viewer
+            generator,
+            obs_num_ems,
+            reward_fn,
+            normalize_dimensions,
+            debug,
+            viewer,
+            full_support,
         )
         self.is_value_based = is_value_based
         self.is_rotation_allowed = is_rotation_allowed
@@ -1351,6 +1359,14 @@ class ExtendedBinPack(BinPack):
                 )
 
         state, observation, extra = super()._make_observation_and_extras(state)
+        if self.is_value_based:
+            valued_items = cast(ValuedItem, state.items)
+            extra["value_packed"] = jnp.sum(state.items_placed * valued_items.value)
+            if isinstance(self.generator, ExtendedTrainingGenerator):
+                extra["gap_to_opt"] = (
+                    extra["value_packed"]
+                    / self.generator.generated_instance_optimal_value
+                )
         flat_obs = observation
         if self.is_rotation_allowed:
             flat_obs = flatten_observation(flat_obs)
@@ -1534,4 +1550,7 @@ class ExtendedBinPack(BinPack):
 
         state.ems = new_ems
         state.ems_mask = new_ems_mask
+        if self.full_support:
+            self.merge_same_height_ems(state)
+
         return state
