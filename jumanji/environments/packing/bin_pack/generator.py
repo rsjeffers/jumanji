@@ -34,6 +34,7 @@ from jumanji.environments.packing.bin_pack.types import (
     ValuedItem,
     empty_ems,
     item_from_space,
+    item_volume,
     location_from_space,
     rotated_items_from_space,
     space_from_item_and_location,
@@ -1247,7 +1248,25 @@ class ExtendedRandomGenerator(RandomGenerator):
             placed_items_locations,
             remaining_items_locations,
         )
-        instance_total_value = jnp.sum(items.value * items_placable_at_beginning_mask)
+        best_value_volume_ratio_item = jnp.argmax(items.value / item_volume(items))
+        normalization_value = jnp.min(
+            jnp.array(
+                jnp.max(
+                    jnp.array(
+                        (
+                            jnp.sum(items.value * jnp.array(items.value > 0)),
+                            -jnp.sum(items.value * jnp.array(items.value < 0)),
+                        )
+                    )
+                ),
+                items.value[best_value_volume_ratio_item]
+                * (
+                    container.volume()
+                    // item_volume(tree_slice(items, best_value_volume_ratio_item))
+                    + 1
+                ),
+            )
+        )
         instance_max_item_value_magnitude = jnp.max(
             abs(items.value * items_placable_at_beginning_mask)
         )
@@ -1264,7 +1283,7 @@ class ExtendedRandomGenerator(RandomGenerator):
             action_mask=None,
             sorted_ems_indexes=sorted_ems_indexes,
             instance_max_item_value_magnitude=instance_max_item_value_magnitude,
-            instance_total_value=instance_total_value,
+            instance_total_value=normalization_value,
             key=key,
         )
         return solution
@@ -1449,7 +1468,25 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
             placed_items_locations,
             remaining_items_locations,
         )
-        instance_total_value = jnp.sum(items.value * final_items_mask)
+        best_value_volume_ratio_item = jnp.argmax(items.value / item_volume(items))
+        normalization_value = jnp.min(
+            jnp.array(
+                jnp.max(
+                    jnp.array(
+                        (
+                            jnp.sum(items.value * jnp.array(items.value > 0)),
+                            -jnp.sum(items.value * jnp.array(items.value < 0)),
+                        )
+                    )
+                ),
+                items.value[best_value_volume_ratio_item]
+                * (
+                    container.volume()
+                    // item_volume(tree_slice(items, best_value_volume_ratio_item))
+                    + 1
+                ),
+            )
+        )
         instance_max_item_value_magnitude = jnp.max(abs(items.value * final_items_mask))
 
         solution = State(
@@ -1464,7 +1501,7 @@ class ExtendedTrainingGenerator(ExtendedRandomGenerator):
             action_mask=None,
             sorted_ems_indexes=sorted_ems_indexes,
             instance_max_item_value_magnitude=instance_max_item_value_magnitude,
-            instance_total_value=instance_total_value,
+            instance_total_value=normalization_value,
             key=key,
         )
         return solution

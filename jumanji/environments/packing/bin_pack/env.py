@@ -26,7 +26,6 @@ from jumanji import specs
 from jumanji.env import Environment
 from jumanji.environments.packing.bin_pack.generator import (
     ExtendedRandomGenerator,
-    ExtendedTrainingGenerator,
     Generator,
     RandomGenerator,
 )
@@ -1359,14 +1358,6 @@ class ExtendedBinPack(BinPack):
                 )
 
         state, observation, extra = super()._make_observation_and_extras(state)
-        if self.is_value_based:
-            valued_items = cast(ValuedItem, state.items)
-            extra["value_packed"] = jnp.sum(state.items_placed * valued_items.value)
-            if isinstance(self.generator, ExtendedTrainingGenerator):
-                extra["gap_to_opt"] = (
-                    extra["value_packed"]
-                    / self.generator.generated_instance_optimal_value
-                )
         flat_obs = observation
         if self.is_rotation_allowed:
             flat_obs = flatten_observation(flat_obs)
